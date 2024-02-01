@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 Inflector = "0.11.4"
+colorful = "0.2.2"

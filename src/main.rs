@@ -1,5 +1,14 @@
 use std::{fmt, io::{self, prelude::*, BufReader}, fs::File, env};
+use colorful::{Color, Colorful};
 use inflector::{Inflector};
+
+static mut ERRORS: Vec<String> = vec![];
+
+fn add_error(msg: String) {
+    unsafe {
+        ERRORS.push(msg);
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct Property {
@@ -7,10 +16,12 @@ struct Property {
     type_: String,
     offset: String,
     access: String,
+    is_struct: bool,
     comments: Vec<String>,
     opt_size: Option<String>,
     rw_type: Option<String>,
     inline_definition: Option<String>,
+    line_num: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +32,13 @@ struct BufferProperty {
     size: String,
     behind_ptr: String,
     comments: Vec<String>,
+    line_num: usize,
+}
+
+impl BufferProperty {
+    pub fn error(&self, msg: &str) -> String {
+        format!("[{}]: {} (line {})", "ERROR".color(Color::Red3b), msg, self.line_num)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +48,7 @@ struct AngelScriptClass {
     native_class: Option<String>,
     properties: Vec<Property>,
     buffers: Vec<BufferProperty>,
+    line_num: usize,
 }
 
 impl Property {
@@ -66,6 +85,9 @@ impl Property {
             _ => "uint32".to_string(),
         }
     }
+    pub fn error(&self, msg: &str) -> String {
+        format!("[{}]: {} (line {})", "ERROR".color(Color::Red3b), msg, self.line_num)
+    }
 }
 
 impl fmt::Display for Property {
@@ -88,19 +110,36 @@ impl fmt::Display for Property {
         // if self.is_mw_id_value {
         //     get_set_type_name = "MwIdValue".to_string();
         // }
-        if self.access.contains("G") {
-            result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.Get{}({})); }}\n",
-                                    comment,
-                                    self.type_, self.ret_handle(), self.name, cast_part, get_set_type_name, self.offset));
-        }
-        if self.access.contains("S") {
-            result.push_str(&format!("\tvoid set_{}({}{} value) {{ this.Set{}({}, value); }}\n",
-                                     self.name, self.type_, self.ret_handle(), get_set_type_name, self.offset));
+
+        if self.is_struct {
+            if self.access.contains("S") {
+                add_error(format!("[{}]: Property {} is a struct ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
+            }
+            let cast_part = format!("{}", self.type_);
+            result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.GetUint64({})); }}\n",
+                                     comment,
+                                     self.type_, self.ret_handle(), self.name, cast_part, self.offset));
+        } else {
+            if self.access.contains("G") {
+                result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.Get{}({})); }}\n",
+                comment,
+                self.type_, self.ret_handle(), self.name, cast_part, get_set_type_name, self.offset));
+            }
+            if self.access.contains("S") {
+                result.push_str(&format!("\tvoid set_{}({}{} value) {{ this.Set{}({}, value); }}\n",
+                self.name, self.type_, self.ret_handle(), get_set_type_name, self.offset));
+            }
         }
         write!(f, "{}", result)
     }
 }
 
+
+impl AngelScriptClass {
+    pub fn error(&self, msg: &str) -> String {
+        format!("[{}]: {} (line {})", "ERROR".color(Color::Red3b), msg, self.line_num)
+    }
+}
 
 impl fmt::Display for AngelScriptClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -112,7 +151,7 @@ impl fmt::Display for AngelScriptClass {
             .join("");
 
         let native_class_code = if let Some(native_class) = &self.native_class {
-            format!("\t{}({}@ block) {{\n\t\tif (block is null) throw(\"not a {}\");\n\t\tsuper(Dev_GetPointerForNod(block), {});\n\t}}\n\t{}@ get_Nod() {{\n\t\treturn cast<{}>(Dev_GetNodFromPointer(ptr));\n\t}}\n",
+            format!("\t{}({}@ nod) {{\n\t\tif (nod is null) throw(\"not a {}\");\n\t\tsuper(Dev_GetPointerForNod(nod), {});\n\t}}\n\t{}@ get_Nod() {{\n\t\treturn cast<{}>(Dev_GetNodFromPointer(ptr));\n\t}}\n",
                     self.name, native_class, native_class, self.size_check, native_class, native_class)
         } else {
             String::new()
@@ -127,7 +166,10 @@ impl fmt::Display for AngelScriptClass {
                     properties_code, comment, buffer.class_name, buffer.name,
                     buffer.class_name, buffer.offset, buffer.size, buffer.behind_ptr);
 
-            let inner_type = buffer.class_name.strip_suffix('s').unwrap();
+            let inner_type = buffer.class_name.strip_suffix('s').unwrap_or_else(|| {
+                unsafe { ERRORS.push(buffer.error("Buffer types must end in 's'")) }
+                buffer.class_name.as_str()
+            });
             let get_fn_name = inner_type.split('_').last().unwrap();
             extra_classes.push(format!("class {} : RawBuffer {{\n\t{}(RawBuffer@ buf) {{\n\t\tsuper(buf.Ptr, buf.ElSize, buf.StructBehindPtr);\n\t}}\n\t{}@ Get{}(uint i) {{\n\t\treturn {}(this[i]);\n\t}}\n}}\n",
                     buffer.class_name, buffer.class_name, inner_type, get_fn_name, inner_type));
@@ -137,8 +179,8 @@ impl fmt::Display for AngelScriptClass {
 
         // println!("{:?}", self);
 
-        write!(f, "class {} : RawBufferElem {{\n\t{}(RawBufferElem@ el) {{\n\t\tif (el.ElSize != {}) throw(\"invalid size for {}\");\n\t\tsuper(el.Ptr, el.ElSize);\n\t}}\n{}\n{}}}\n\n{}",
-               self.name, self.name, self.size_check, self.name, native_class_code, properties_code, extra_classes_str)
+        write!(f, "class {} : RawBufferElem {{\n\t{}(RawBufferElem@ el) {{\n\t\tif (el.ElSize != {}) throw(\"invalid size for {}\");\n\t\tsuper(el.Ptr, el.ElSize);\n\t}}\n\t{}(uint64 ptr) {{\n\t\tsuper(ptr, {});\n\t}}\n{}\n{}}}\n\n{}",
+               self.name, self.name, self.size_check, self.name, self.name, self.size_check, native_class_code, properties_code, extra_classes_str)
     }
 }
 
@@ -174,8 +216,9 @@ fn main() -> io::Result<()> {
     let mut current_class: Option<AngelScriptClass> = None;
     let mut comments: Vec<String> = vec![];
 
-    for line in reader.lines() {
+    for (line_num, line) in reader.lines().enumerate() {
         let line = line?;
+        let line_num = line_num + 1;
         if line.starts_with('[') {
             if let Some(class) = current_class.take() {
                 classes.push(class);
@@ -183,13 +226,15 @@ fn main() -> io::Result<()> {
                 // println!("{}", class);
             }
 
-            let parts: Vec<&str> = line.trim_matches(|p| p == '[' || p == ']').trim_matches('"').split(':').collect();
+            let parts: Vec<&str> = line.trim_matches(|p| p == '[' || p == ']').trim_matches('"').split(':').map(|s| s.trim()).collect();
             current_class = Some(AngelScriptClass {
                 name: parts[0].to_string(),
                 size_check: parts[1].trim().to_string(),
                 properties: Default::default(), // properties.clone(),
                 native_class: None,
-                buffers: Default::default()
+                buffers: Default::default(),
+                line_num
+
             });
             // properties.clear();
         } else if !line.trim().is_empty() {
@@ -213,17 +258,34 @@ fn main() -> io::Result<()> {
                         offset: buffer_details[1].to_string(),
                         size: buffer_details[2].to_string(),
                         behind_ptr: buffer_details.get(3).map(|s| s.to_lowercase()).unwrap_or("false".to_string()),
-                        comments
+                        comments,
+                        line_num
+                    });
+                    comments = vec![];
+                } else if property_name.starts_with("Struct: ") {
+                    let struct_name = property_name.split(':').nth(1).unwrap().trim_quotes();
+                    let struct_details: Vec<&str> = parts[1].trim_quotes().split(',').map(|s| s.trim()).collect();
+                    class.properties.push(Property {
+                        name: struct_name.to_string(),
+                        type_: struct_details[0].to_string(),
+                        offset: struct_details[1].to_string(),
+                        access: struct_details[2].to_string(),
+                        comments,
+                        is_struct: true,
+                        line_num,
+                        ..Default::default()
                     });
                     comments = vec![];
                 } else if let Some(defn) = line.strip_prefix("Inline: ") {
                     class.properties.push(Property {
                         inline_definition: Some(defn.to_string()),
                         comments,
+                        line_num,
                         ..Default::default()
                     });
                     comments = vec![];
                 } else {
+                    // example: CGameCtnBlock::ECardinalDirections(4), 0x58, GS
                     let mut ty_parts = property_details[0].trim().split("(");
                     let type_ = ty_parts.nth(0).unwrap().to_string();
                     let opt_size = ty_parts.nth(0).and_then(|s| s.split(")").nth(0)).map(|s| s.to_string());
@@ -236,6 +298,7 @@ fn main() -> io::Result<()> {
                         opt_size,
                         rw_type,
                         comments,
+                        line_num,
                         ..Default::default()
                     };
                     comments = vec![];
@@ -253,6 +316,11 @@ fn main() -> io::Result<()> {
 
     for cls in classes {
         println!("{}", cls);
+    }
+
+    eprintln!("Found {} errors:", unsafe { ERRORS.len() });
+    for err in unsafe { ERRORS.iter() } {
+        eprintln!("{}", err);
     }
 
     Ok(())
