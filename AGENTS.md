@@ -1,0 +1,1 @@
+- after finishing a feature, always commit it and `just install`
