@@ -1,0 +1,6 @@
+[DSystemFidFile: SZ_FID_FILE]
+NativeClass = CSystemFidFile
+ParentFolder = CSystemFidsFolder, 0x18, G
+NodClassId = uint, O_FID_NodClassId, G
+FidNod = CMwNod, O_FID_Nod, GS
+ByteSize = uint, O_FID_ByteSize, G

@@ -1,0 +1,20 @@
+class DPlugBitmap : RawBufferElem {
+	DPlugBitmap(RawBufferElem@ el) {
+		if (el.ElSize != 448) throw("invalid size for DPlugBitmap");
+		super(el.Ptr, el.ElSize);
+	}
+	DPlugBitmap(uint64 ptr) {
+		super(ptr, 448);
+	}
+	DPlugBitmap(CPlugBitmap@ nod) {
+		if (nod is null) throw("not a CPlugBitmap");
+		super(Dev_GetPointerForNod(nod), 448);
+	}
+	CPlugBitmap@ get_Nod() {
+		return cast<CPlugBitmap>(Dev_GetNodFromPointer(ptr));
+	}
+
+	DRenderInfo@ get_RenderInfo() { auto _ptr = this.GetUint64(0xA8); if (_ptr == 0) return null; return DRenderInfo(_ptr); }
+}
+
+

@@ -1,0 +1,61 @@
+[DDx11Viewport: 29248]
+NativeClass = CDx11Viewport
+# DisplayNames + 0x10
+Struct: mDxRenderStuff = DxRenderStuff, 0x6E0, G
+Buffer: mDepthBufferStructs = DepthBufferStructs, 0x840, 0x20, false
+# depth buffer: HyperZ.Texture
+VisionResourceFile = CVisionResourceFile, 0x1170, G
+# reshade identifies this as the depth buffer -- ptr matches
+DepthBufferSomething = uint64, 0x15c8, G
+# from bitmap: +a8, +258
+HyperZBitmap = CPlugBitmap, 0x1620, G
+DepthBufferBitmap = CPlugBitmap, 0x16c0, G
+#----------- 0x1b60 - 0x1b80
+# Some Dx11 related struct
+Struct: mDx11Stuff = Dx11Stuff, 0x1b60, G
+camera = CHmsCamera, 0x1b68, G
+zone = CHmsZone, 0x1b70, G
+# UNCHECKED, but it's an exposed offset
+# Buffer: Display_Win32DeviceNames = wstring, 0x1b78, 0x10, false
+
+# at least 0xAC0 big
+[Dx11Stuff: 0xAC0]
+depthStencilView = D3D11DepthStencilView, 0xAB8, G
+
+[DxRenderStuff: 0x158]
+Struct: mDevice = D3D11Device, 0xF0, G
+Struct: mDeviceCtx = D3D11DeviceContext, 0xF8, G
+Struct: mDeviceCtx2 = D3D11DeviceContext, 0x100, G
+Struct: mSwapChain = D3D11SwapChain, 0x110, G
+
+[DepthBufferStruct: 0x20]
+# todo: check offsets
+Bitmap = DPlugBitmap, 0x0, G
+Struct: RenderInfo = DRenderInfo, 0x08, G
+u1 = uint, 0x10, G
+width = uint, 0x14, G
+height = uint, 0x18, G
+u2 = uint, 0x1C, G
+
+[D3D11DepthStencilView: 0x8]
+vtable = uint64, 0x0, G
+
+[D3D11SwapChain: 0x8]
+vtable = uint64, 0x0, G
+
+[D3D11Device: 0x8]
+vtable = uint64, 0x0, G
+
+[D3D11DeviceContext: 0x8]
+vtable = uint64, 0x0, G
+
+[D3D11Texture: 0x8]
+vtable = uint64, 0x0, G
+
+# stored next to bitmap and also in the bitmap at 0xA8
+# unsure of size, seems like 0x280
+[DRenderInfo: 0x280]
+# 0x130? -> 0xD0 to texture also
+Struct: Bitmap = DPlugBitmap, 0x200, G
+PtrTo_0x248 = uint64, 0x250, G
+Struct: Texture = D3D11Texture, 0x258, G
