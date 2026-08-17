@@ -1,10 +1,30 @@
-use std::{fmt, io::{self, prelude::*, BufReader}, fs::File, env};
+use std::{fmt, io::{self, prelude::*, BufReader}, fs::File, path::PathBuf};
+use clap::Parser;
 use colorful::{Color, Colorful};
 use inflector::{Inflector};
 
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")");
+
+/// Generate AngelScript DevStructs from an .xtoml spec.
+#[derive(Parser)]
+#[command(name = "epp-codegen", version = VERSION, about)]
+struct Cli {
+    /// Path to the .xtoml file to compile.
+    file_path: PathBuf,
+}
+
 static mut ERRORS: Vec<String> = vec![];
+// Interim severity tracking: warnings share ERRORS but never affect the exit code.
+static mut ERROR_COUNT: usize = 0;
 
 fn add_error(msg: String) {
+    unsafe {
+        ERROR_COUNT += 1;
+        ERRORS.push(msg);
+    }
+}
+
+fn add_warning(msg: String) {
     unsafe {
         ERRORS.push(msg);
     }
@@ -115,14 +135,14 @@ impl fmt::Display for Property {
 
         if self.is_struct {
             if self.access.contains("S") {
-                add_error(format!("[{}]: Property {} is a struct ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
+                add_warning(format!("[{}]: Property {} is a struct ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
             }
             result.push_str(&format!("{}\t{}{} get_{}() {{ auto _ptr = this.GetUint64({}); if (_ptr == 0) return null; return {}(_ptr); }}\n",
                                      comment,
                                      self.type_, self.ret_handle(), self.name, self.offset, self.type_));
         } else if self.is_embedded {
             if self.access.contains("S") {
-                add_error(format!("[{}]: Property {} is embedded ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
+                add_warning(format!("[{}]: Property {} is embedded ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
             }
             result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.Ptr + {}); }}\n",
                                      comment,
@@ -180,7 +200,7 @@ impl fmt::Display for AngelScriptClass {
                     buffer.class_name, buffer.offset, buffer.size, buffer.behind_ptr);
 
             let inner_type = buffer.class_name.strip_suffix('s').unwrap_or_else(|| {
-                unsafe { ERRORS.push(buffer.error("Buffer types must end in 's'")) }
+                add_error(buffer.error("Buffer types must end in 's'"));
                 buffer.class_name.as_str()
             });
             let get_fn_name = inner_type.split('_').last().unwrap();
@@ -217,16 +237,15 @@ trait ExtraStrOps<'a> {
 
 
 fn main() -> io::Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
 
-    // Check if the user provided a file path
-    if args.len() != 2 {
-        eprintln!("Usage: {} <file_path>", args[0]);
-        std::process::exit(1);
-    }
-
-    // Get the file path from the command line arguments
-    let file = File::open(&args[1])?;
+    let file = match File::open(&cli.file_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {}", cli.file_path.display(), e);
+            std::process::exit(1);
+        }
+    };
     let reader = BufReader::new(file);
 
     let mut classes: Vec<AngelScriptClass> = vec![];
@@ -359,6 +378,10 @@ fn main() -> io::Result<()> {
     eprintln!("Found {} errors:", unsafe { ERRORS.len() });
     for err in unsafe { ERRORS.iter() } {
         eprintln!("{}", err);
+    }
+
+    if unsafe { ERROR_COUNT } > 0 {
+        std::process::exit(1);
     }
 
     Ok(())
