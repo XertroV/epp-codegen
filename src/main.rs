@@ -17,6 +17,7 @@ struct Property {
     offset: String,
     access: String,
     is_struct: bool,
+    is_embedded: bool,
     comments: Vec<String>,
     opt_size: Option<String>,
     rw_type: Option<String>,
@@ -48,6 +49,7 @@ struct AngelScriptClass {
     native_class: Option<String>,
     properties: Vec<Property>,
     buffers: Vec<BufferProperty>,
+    comments: Vec<String>,
     line_num: usize,
 }
 
@@ -115,10 +117,16 @@ impl fmt::Display for Property {
             if self.access.contains("S") {
                 add_error(format!("[{}]: Property {} is a struct ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
             }
-            let cast_part = format!("{}", self.type_);
-            result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.GetUint64({})); }}\n",
+            result.push_str(&format!("{}\t{}{} get_{}() {{ auto _ptr = this.GetUint64({}); if (_ptr == 0) return null; return {}(_ptr); }}\n",
                                      comment,
-                                     self.type_, self.ret_handle(), self.name, cast_part, self.offset));
+                                     self.type_, self.ret_handle(), self.name, self.offset, self.type_));
+        } else if self.is_embedded {
+            if self.access.contains("S") {
+                add_error(format!("[{}]: Property {} is embedded ({}), Setter access not implemented.", "WARN".color(Color::Red3b), self.name.clone().color(Color::Orange3), self.type_.clone().color(Color::Turquoise2)));
+            }
+            result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.Ptr + {}); }}\n",
+                                     comment,
+                                     self.type_, self.ret_handle(), self.name, self.type_, self.offset));
         } else {
             if self.access.contains("G") {
                 result.push_str(&format!("{}\t{}{} get_{}() {{ return {}(this.Get{}({})); }}\n",
@@ -126,8 +134,13 @@ impl fmt::Display for Property {
                 self.type_, self.ret_handle(), self.name, cast_part, get_set_type_name, self.offset));
             }
             if self.access.contains("S") {
-                result.push_str(&format!("\tvoid set_{}({}{} value) {{ this.Set{}({}, value); }}\n",
-                self.name, self.type_, self.ret_handle(), get_set_type_name, self.offset));
+                if self.type_ == "string" {
+                    result.push_str(&format!("\tvoid set_{}(const string &in value) {{ this.Set{}({}, value); }}\n",
+                    self.name, get_set_type_name, self.offset));
+                } else {
+                    result.push_str(&format!("\tvoid set_{}({}{} value) {{ this.Set{}({}, value); }}\n",
+                    self.name, self.type_, self.ret_handle(), get_set_type_name, self.offset));
+                }
             }
         }
         write!(f, "{}", result)
@@ -179,8 +192,12 @@ impl fmt::Display for AngelScriptClass {
 
         // println!("{:?}", self);
 
-        write!(f, "class {} : RawBufferElem {{\n\t{}(RawBufferElem@ el) {{\n\t\tif (el.ElSize != {}) throw(\"invalid size for {}\");\n\t\tsuper(el.Ptr, el.ElSize);\n\t}}\n\t{}(uint64 ptr) {{\n\t\tsuper(ptr, {});\n\t}}\n{}\n{}}}\n\n{}",
-               self.name, self.name, self.size_check, self.name, self.name, self.size_check, native_class_code, properties_code, extra_classes_str)
+        let class_comments = if self.comments.len() > 0 {
+            self.comments.join("\n") + "\n"
+        } else { String::new() };
+
+        write!(f, "{}class {} : RawBufferElem {{\n\t{}(RawBufferElem@ el) {{\n\t\tif (el.ElSize != {}) throw(\"invalid size for {}\");\n\t\tsuper(el.Ptr, el.ElSize);\n\t}}\n\t{}(uint64 ptr) {{\n\t\tsuper(ptr, {});\n\t}}\n{}\n{}}}\n\n{}",
+               class_comments, self.name, self.name, self.size_check, self.name, self.name, self.size_check, native_class_code, properties_code, extra_classes_str)
     }
 }
 
@@ -233,6 +250,7 @@ fn main() -> io::Result<()> {
                 properties: Default::default(), // properties.clone(),
                 native_class: None,
                 buffers: Default::default(),
+                comments: std::mem::take(&mut comments),
                 line_num
 
             });
@@ -276,6 +294,20 @@ fn main() -> io::Result<()> {
                         ..Default::default()
                     });
                     comments = vec![];
+                } else if property_name.starts_with("Embedded: ") {
+                    let embedded_name = property_name.split(':').nth(1).unwrap().trim_quotes();
+                    let embedded_details: Vec<&str> = parts[1].trim_quotes().split(',').map(|s| s.trim()).collect();
+                    class.properties.push(Property {
+                        name: embedded_name.to_string(),
+                        type_: embedded_details[0].to_string(),
+                        offset: embedded_details[1].to_string(),
+                        access: embedded_details[2].to_string(),
+                        comments,
+                        is_embedded: true,
+                        line_num,
+                        ..Default::default()
+                    });
+                    comments = vec![];
                 } else if let Some(defn) = line.strip_prefix("Inline: ") {
                     class.properties.push(Property {
                         inline_definition: Some(defn.to_string()),
@@ -286,6 +318,12 @@ fn main() -> io::Result<()> {
                     comments = vec![];
                 } else {
                     // example: CGameCtnBlock::ECardinalDirections(4), 0x58, GS
+                    let access = property_details.get(2).map(|s| s.trim()).unwrap_or("");
+                    if !matches!(access, "G" | "S" | "GS") {
+                        // invalid field line: skip silently, dropping any pending comments
+                        comments = vec![];
+                        continue;
+                    }
                     let mut ty_parts = property_details[0].trim().split("(");
                     let type_ = ty_parts.nth(0).unwrap().to_string();
                     let opt_size = ty_parts.nth(0).and_then(|s| s.split(")").nth(0)).map(|s| s.to_string());
@@ -294,7 +332,7 @@ fn main() -> io::Result<()> {
                         name: property_name.to_string(),
                         type_,
                         offset: property_details[1].trim().to_string(),
-                        access: property_details[2].trim().to_string(),
+                        access: access.to_string(),
                         opt_size,
                         rw_type,
                         comments,
