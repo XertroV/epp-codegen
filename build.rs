@@ -1,8 +1,14 @@
 use std::process::Command;
 
 fn main() {
-    // Re-run when HEAD moves so --version tracks the checkout.
+    // Re-run when HEAD moves so --version tracks the checkout. Committing on a
+    // branch updates the ref file, not .git/HEAD — watch both.
     println!("cargo:rerun-if-changed=.git/HEAD");
+    if let Ok(head) = std::fs::read_to_string(".git/HEAD") {
+        if let Some(reference) = head.trim().strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed=.git/{reference}");
+        }
+    }
     let hash = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
