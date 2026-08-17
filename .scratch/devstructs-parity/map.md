@@ -3,6 +3,8 @@
 Labels: wayfinder:map
 Tracker: local markdown (`.scratch/`)
 
+> **Destination reached (2026-08-17).** Byte-parity achieved (real wrapper run → empty `git diff -- src/DevStructs`), CLI contract implemented, and the module split landed (main/parse/ast/emit/error) with all 27 goldens green. All tickets resolved; only the fog below remains for future efforts.
+
 ## Destination
 
 `epp-codegen` regenerates the checked-in Editor++ DevStructs byte-identically

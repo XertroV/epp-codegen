@@ -14,5 +14,7 @@ Architecture terms (module, interface, depth, seam, adapter, leverage, locality)
 
 ## Current state
 
-- Wayfinder map: `.scratch/devstructs-parity/map.md` (destination, decisions, fog).
-- Accepted architecture direction: four deepenings post-parity — emit seam (`emit(&FileAst) -> String`), parse module, diagnostics replacing `static mut ERRORS`, CLI thin adapter.
+- **Byte-parity achieved** (2026-08-17): all 27 golden fixtures green; a real wrapper run leaves `git diff -- src/DevStructs` empty.
+- CLI contract implemented: clap, `--version` with git hash, exit codes per the error model.
+- Wayfinder map: `.scratch/devstructs-parity/map.md` — **all tickets resolved**; only fog (drift policy, CI, distribution) remains unticketed.
+- Architecture direction (decided, in implementation): module split into main(CLI adapter)/parse/ast/emit/error per the ticket-04 hybrid AST design; goldens stay at the process seam.
