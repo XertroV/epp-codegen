@@ -1,7 +1,7 @@
 # Module seams for the split
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by: 03, 04
 
 ## Question
@@ -18,3 +18,14 @@ Sub-questions:
 - Do golden tests migrate from the process seam to the `emit()` seam after the split, or stay at the process seam?
 - Visibility discipline: what is `pub` — ideally only `parse`, `emit`, `Diagnostic`, and the AST types tests need.
 - Delete `main01.rs` as part of this ticket's implementation.
+
+## Answer
+
+Resolved 2026-08-17 by implication of the other tickets (user-confirmed):
+
+- **`ast.rs` is its own module** — per ticket 04's hybrid design it is the home of `Ty`, `accessor_suffix()`, and the verbatim-payload types; not folded into parse.
+- **Goldens stay at the process seam permanently** (ticket 02) — the module split never touches the test harness; no migration to an `emit()` seam.
+- **Module layout** (per AGENT-FIXUP.md's recommended shape, confirmed): `main.rs` = CLI adapter only (clap, per ticket 06); `parse.rs` = xtoml → FileAst; `ast.rs` = the types + classification; `emit.rs` = FileAst → AngelScript; `error.rs` = `Diagnostic`.
+- **Visibility**: `pub` only what `main.rs` names — `parse`, `emit`, `Diagnostic`, and the AST types that appear in those signatures.
+- **`main01.rs` deleted** in the refactor.
+- Implementation order within the refactor (accepted candidates, ranked): emit seam first, then parse module, then diagnostics replacing `static mut ERRORS`, then the CLI adapter. Goldens must stay green at every step.
